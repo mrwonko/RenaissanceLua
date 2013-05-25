@@ -26,7 +26,9 @@ enum RESERVED {
   TK_AND = FIRST_RESERVED, TK_BREAK,
   TK_DO, TK_ELSE, TK_ELSEIF, TK_END, TK_FALSE, TK_FOR, TK_FUNCTION,
   TK_IF, TK_IN, TK_LOCAL, TK_NIL, TK_NOT, TK_OR, TK_REPEAT,
-  TK_RETURN, TK_THEN, TK_TRUE, TK_UNTIL, TK_WHILE,
+  TK_RETURN, TK_THEN, TK_TRUE, TK_UNTIL,
+  TK_CURRIED,
+  TK_WHILE,
   /* other terminal symbols */
   TK_CONCAT, TK_DOTS, TK_EQ, TK_GE, TK_LE, TK_NE, TK_NUMBER,
   TK_NAME, TK_STRING, TK_EOS
@@ -66,15 +68,22 @@ typedef struct LexState {
   char decpoint;  /* locale decimal point */
 } LexState;
 
-
+/* State-global lexer initialization - makes sure reserved words are in the stringtable and marked as reserved */
 LUAI_FUNC void luaX_init (lua_State *L);
+/* LexState initialization */
 LUAI_FUNC void luaX_setinput (lua_State *L, LexState *ls, ZIO *z,
                               TString *source);
+/* Lexer string allocation */
 LUAI_FUNC TString *luaX_newstring (LexState *ls, const char *str, size_t l);
+/* Discard the current token and read the next one */
 LUAI_FUNC void luaX_next (LexState *ls);
+/* Read the next token into ls->lookahead. Don't call again until token is consumed by luaX_next! */
 LUAI_FUNC void luaX_lookahead (LexState *ls);
+/* Raise a Lexer-related Error */
 LUAI_FUNC void luaX_lexerror (LexState *ls, const char *msg, int token);
+/* Raise a SyntaxError */
 LUAI_FUNC void luaX_syntaxerror (LexState *ls, const char *s);
+/* Get a string representation of a token */
 LUAI_FUNC const char *luaX_token2str (LexState *ls, int token);
 
 

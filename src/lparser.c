@@ -1167,6 +1167,100 @@ static void ifstat (LexState *ls, int line) {
   check_match(ls, TK_END, TK_IF, line);
 }
 
+static void currybody (LexState *ls, expdesc *e, int first, int needself, int line) {
+  /* body ->  `(' parlist `)' chunk END */
+  FuncState new_fs;
+  int curry = 0; /* do we need to curry? */
+  open_func(ls, &new_fs);
+  new_fs.f->linedefined = line;
+  /* No vararg until proven otherwise */
+  new_fs.f->is_vararg = 0;
+  /* need '(' before first argument */
+  if (first)
+  {
+    checknext(ls, '(');
+  }
+  /* add a "self" parameter if required. Implies currying. */
+  if (first && needself) {
+    new_localvarliteral(ls, "self", 0);
+    adjustlocalvars(ls, 1);
+    curry = 1;
+  }
+  /* No self required. Look for parameters. */
+  else {
+    /* No parameters? (result of function foo() or function t.foo()) */
+    if (testnext(ls, ')')) {
+      /* no currying */
+    }
+    /* There are parameters. */
+    else {
+      /* param -> NAME */
+      if(ls->t.token == TK_NAME) {
+        /* create local variable with name */
+        new_localvar(ls, str_checkname(ls), 0);
+        adjustlocalvars(ls, 1);
+        /* More than one parameter? */
+        if (testnext(ls, ',')) {
+          curry = 1;
+        }
+        else {
+          checknext(ls, ')');
+        }
+      }
+      /* param -> '...' */
+      else if (testnext(ls, TK_DOTS)) {
+        /* Dots must be last. */
+        checknext(ls, ')');
+#if defined(LUA_COMPAT_VARARG)
+        /* use `arg' as default name */
+        new_localvarliteral(ls, "arg", 0);
+        adjustlocalvars(ls, 1);
+        new_fs.f->is_vararg = VARARG_HASARG | VARARG_NEEDSARG;
+#endif
+        new_fs.f->is_vararg |= VARARG_ISVARARG;
+      }
+      else {
+        luaX_syntaxerror(ls, "<name> or " LUA_QL("...") " expected");
+      }
+    }
+  }
+  new_fs.f->numparams = cast_byte(new_fs.nactvar - (new_fs.f->is_vararg & VARARG_HASARG));
+
+  luaK_reserveregs(&new_fs, new_fs.nactvar);  /* reserve register for parameters */
+
+  if (curry) {
+    expdesc e;
+    currybody(ls, &e, 0, 0, line);
+    /* return a single value, the function */
+    luaK_ret(&new_fs, luaK_exp2anyreg(&new_fs, &e), 1);
+  }
+  else {
+    chunk(ls);
+    check_match(ls, TK_END, TK_FUNCTION, line);
+  }
+  new_fs.f->lastlinedefined = ls->linenumber;
+  close_func(ls);
+  pushclosure(ls, &new_fs, e);
+}
+
+static void localcurriedfunc (LexState *ls) {
+  expdesc v, b;
+  FuncState *fs = ls->fs;
+  luaX_next(ls);  /* skip FUNCTION */
+  new_localvar(ls, str_checkname(ls), 0); /* store local variable name for debugging and upvalues */
+  init_exp(&v, VLOCAL, fs->freereg); /* info on the expression: is local variable + its register */
+  luaK_reserveregs(fs, 1); /* increase register count */
+  adjustlocalvars(ls, 1); /* increase local variable count */
+  currybody(ls, &b, 1, 0, ls->linenumber); /* read function */
+  luaK_storevar(fs, &v, &b); /* assign function to that variable */
+  /* debug information will only see the variable after this point! */
+  getlocvar(fs, fs->nactvar - 1).startpc = fs->pc;
+}
+
+static void curriedfunc (LexState *ls) {
+  luaX_lexerror(ls, "curried function not yet implemented", ls->t.token);
+}
+
 
 static void localfunc (LexState *ls) {
   expdesc v, b;
@@ -1307,9 +1401,20 @@ static int statement (LexState *ls) {
       luaX_next(ls);  /* skip LOCAL */
       if (testnext(ls, TK_FUNCTION))  /* local function? */
         localfunc(ls);
+      else if (testnext(ls, TK_CURRIED))  /* local curried function? */
+      {
+        check(ls, TK_FUNCTION);
+        localcurriedfunc(ls);
+      }
       else
         localstat(ls);
       return 0;
+    }
+    case TK_CURRIED:
+    {
+      luaX_next(ls);  /* skip CURRIED */
+      check(ls, TK_FUNCTION);
+      curriedfunc(ls);
     }
     case TK_RETURN: {  /* stat -> retstat */
       retstat(ls);

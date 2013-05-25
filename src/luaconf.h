@@ -769,6 +769,8 @@ union luai_Cast { double l_d; long l_l; };
 #undef LUA_COMPAT_GFIND
 #undef LUA_COMPAT_OPENLIB
 
+/* No 5.1 binary compatibility */
+#undef LUA_COMPAT_TFORLOOP
 
 
 #endif
