@@ -830,6 +830,12 @@ static void simpleexp (LexState *ls, expdesc *v) {
       body(ls, v, 0, ls->linenumber);
       return;
     }
+    case TK_CURRIED: {
+      checknext(ls, TK_CURRIED);
+      checknext(ls, TK_FUNCTION);
+      currybody(ls, v, 1, 0, ls->linenumber);
+      return;
+    }
     default: {
       primaryexp(ls, v);
       return;

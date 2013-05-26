@@ -31,6 +31,7 @@ local curried function concat2(x, ...)
 end
 assert(concat2(3)(4, "ho") == "34ho")
 
+
 --    global functions
 
 -- useless currying
@@ -63,3 +64,38 @@ curried function g_concat2(x, ...)
 	return table.concat{x, ...}
 end
 assert(g_concat2(3)(4, "ho") == "34ho")
+
+
+--    anonymous functions
+
+-- useless currying
+assert(
+	(curried function()
+		return "Hello"
+	end)() == "Hello")
+	
+-- useless currying
+assert(
+	(curried function(str)
+		return str
+	end)("World!") == "World!")
+
+-- normal currying
+
+local add5 =
+	(curried function(x, y)
+		return x + y
+	end)(5)
+assert(add5(10) == 15)
+
+-- useless currying with vararg
+assert(
+	(curried function(...)
+		return table.concat{...}
+	end)(1, 2, "hey") == "12hey")
+
+-- currying with vararg
+assert(
+	(curried function(x, ...)
+		return table.concat{x, ...}
+	end)(3)(4, "ho") == "34ho")
