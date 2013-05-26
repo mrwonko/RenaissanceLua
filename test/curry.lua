@@ -1,25 +1,65 @@
+--    local functions
+
+-- useless currying
 local curried function hello()
-	print("Hello")
+	return "Hello"
 end
-hello()
+assert(hello() == "Hello")
 
-local curried function simplePrint(str)
-	print(str)
+-- useless currying
+local curried function id(str)
+	return str
 end
-simplePrint("World!")
+assert(id("World!") == "World!")
 
+-- normal currying
 local curried function sum(x, y)
 	return x + y
 end
 local add5 = sum(5)
-print(add5(10))
+assert(add5(10) == 15)
 
-local curried function print2(...)
-	print(...)
+-- useless currying with vararg
+local curried function concat(...)
+	return table.concat{...}
 end
-print2(1, 2, "hey")
+assert(concat(1, 2, "hey") == "12hey")
 
-local curried function print3(x, ...)
-	print(x, ...)
+-- currying with vararg
+local curried function concat2(x, ...)
+	return table.concat{x, ...}
 end
-print3(3)(4, "ho")
+assert(concat2(3)(4, "ho") == "34ho")
+
+--    global functions
+
+-- useless currying
+curried function g_hello()
+	return "Hello"
+end
+assert(g_hello() == "Hello")
+
+-- useless currying
+curried function g_id(str)
+	return str
+end
+assert(g_id("World!") == "World!")
+
+-- normal currying
+curried function g_sum(x, y)
+	return x + y
+end
+local add5 = g_sum(5)
+assert(add5(10) == 15)
+
+-- useless currying with vararg
+curried function g_concat(...)
+	return table.concat{...}
+end
+assert(g_concat(1, 2, "hey") == "12hey")
+
+-- currying with vararg
+curried function g_concat2(x, ...)
+	return table.concat{x, ...}
+end
+assert(g_concat2(3)(4, "ho") == "34ho")

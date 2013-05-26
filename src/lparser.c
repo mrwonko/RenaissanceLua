@@ -1367,8 +1367,15 @@ static void localcurriedfunc (LexState *ls) {
   getlocvar(fs, fs->nactvar - 1).startpc = fs->pc;
 }
 
-static void curriedfunc (LexState *ls) {
-  luaX_lexerror(ls, "curried function not yet implemented", ls->t.token);
+static int funcname (LexState *ls, expdesc *v);
+static void curriedfunc (LexState *ls, int line) {
+  /* funcstat -> CURRIED FUNCTION funcname body */
+  int needself;
+  expdesc v, b;
+  needself = funcname(ls, &v);
+  currybody(ls, &b, 1, needself, line);
+  luaK_storevar(ls->fs, &v, &b);
+  luaK_fixline(ls->fs, line);  /* definition `happens' in the first line */
 }
 
 
@@ -1522,9 +1529,10 @@ static int statement (LexState *ls) {
     }
     case TK_CURRIED:
     {
-      luaX_next(ls);  /* skip CURRIED */
-      check(ls, TK_FUNCTION);
-      curriedfunc(ls);
+      checknext(ls, TK_CURRIED);  /* skip CURRIED */
+      checknext(ls, TK_FUNCTION); /* skip FUNCTION */
+      curriedfunc(ls, line);
+      return 0; /* need not be last. */
     }
     case TK_RETURN: {  /* stat -> retstat */
       retstat(ls);
