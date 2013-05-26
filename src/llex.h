@@ -30,8 +30,11 @@ enum RESERVED {
   TK_CURRIED, TK_CONTINUE,
   TK_WHILE,
   /* other terminal symbols */
-  TK_CONCAT, TK_DOTS, TK_EQ, TK_GE, TK_LE, TK_NE, TK_NUMBER,
-  TK_NAME, TK_STRING, TK_EOS
+  TK_CONCAT, TK_DOTS, TK_EQ, TK_GE, TK_LE, TK_NE,
+#if defined(LUA_BITWISE_OPERATORS)
+  TK_LSHFT, TK_RSHFT, TK_XOR,
+#endif
+  TK_NUMBER, TK_NAME, TK_STRING, TK_EOS
 };
 
 /* number of reserved words */

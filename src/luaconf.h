@@ -211,6 +211,20 @@
 
 
 /*
+@@ LUA_BITWISE_OPERATORS enable logical operators | & ^| >> << ~ on lua_Number
+@* but also arithmetic operator \ (integer division)
+*/
+#define LUA_BITWISE_OPERATORS
+
+
+/**
+@@ LUA_BANG_NE enables != as an alernative to ~=
+*/
+#define LUA_BANG_NE
+
+
+
+/*
 ** {==================================================================
 ** Stand-alone configuration
 ** ===================================================================
@@ -539,6 +553,9 @@
 #define luai_numsub(a,b)	((a)-(b))
 #define luai_nummul(a,b)	((a)*(b))
 #define luai_numdiv(a,b)	((a)/(b))
+#ifdef LUA_BITWISE_OPERATORS
+#define luai_numintdiv(a,b)	(floor((a)/(b)))
+#endif
 #define luai_nummod(a,b)	((a) - floor((a)/(b))*(b))
 #define luai_numpow(a,b)	(pow(a,b))
 #define luai_numunm(a)		(-(a))
@@ -546,6 +563,16 @@
 #define luai_numlt(a,b)		((a)<(b))
 #define luai_numle(a,b)		((a)<=(b))
 #define luai_numisnan(a)	(!luai_numeq((a), (a)))
+
+#if defined(LUA_BITWISE_OPERATORS)
+#define luai_logor(r, a, b)	{ lua_Integer ai,bi; lua_number2int(ai,a); lua_number2int(bi,b); r = ai|bi; }
+#define luai_logand(r, a,b)	{ lua_Integer ai,bi; lua_number2int(ai,a); lua_number2int(bi,b); r = ai&bi; }
+#define luai_logxor(r, a,b)	{ lua_Integer ai,bi; lua_number2int(ai,a); lua_number2int(bi,b); r = ai^bi; }
+#define luai_lognot(r,a)	{ lua_Integer ai; lua_number2int(ai,a); r = ~ai; }
+#define luai_loglshft(r, a,b)	{ lua_Integer ai,bi; lua_number2int(ai,a); lua_number2int(bi,b); r = ai<<bi; }
+#define luai_logrshft(r, a,b)	{ lua_Integer ai,bi; lua_number2int(ai,a); lua_number2int(bi,b); r = ai>>bi; }
+#endif
+
 #endif
 
 
@@ -565,7 +592,7 @@
 /* On a Microsoft compiler, use assembler */
 #if defined(_MSC_VER)
 
-#define lua_number2int(i,d)   __asm fld d   __asm fistp i
+#define lua_number2int(i,d)   { __asm fld d   __asm fistp i }
 #define lua_number2integer(i,n)		lua_number2int(i, n)
 
 /* the next trick should work on any Pentium, but sometimes clashes
@@ -771,6 +798,9 @@ union luai_Cast { double l_d; long l_l; };
 
 /* No 5.1 binary compatibility */
 #undef LUA_COMPAT_TFORLOOP
+
+/* No != for inequality */
+#undef LUA_BANG_NE
 
 
 #endif
