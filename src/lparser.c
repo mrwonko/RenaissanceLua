@@ -40,6 +40,7 @@
 typedef struct BlockCnt {
   struct BlockCnt *previous;  /* chain */
   int breaklist;  /* list of jumps out of this loop */
+  int continuelist;  /* list of jumps to the loop's test */
   lu_byte nactvar;  /* # active locals outside the breakable structure */
   lu_byte upval;  /* true if some variable in the block is an upvalue */
   lu_byte isbreakable;  /* true if `block' is a loop */
@@ -284,6 +285,7 @@ static void enterlevel (LexState *ls) {
 
 static void enterblock (FuncState *fs, BlockCnt *bl, lu_byte isbreakable) {
   bl->breaklist = NO_JUMP;
+  bl->continuelist = NO_JUMP;
   bl->isbreakable = isbreakable;
   bl->nactvar = fs->nactvar;
   bl->upval = 0;
@@ -440,24 +442,31 @@ struct ConsControl {
 };
 
 
+/* Set a record field to given key/value pair */
+static void recfieldkv (LexState *ls, struct ConsControl *cc, expdesc *key, expdesc *val) {
+  FuncState *fs = ls->fs;
+  int reg = ls->fs->freereg;
+  int rkkey;
+  cc->nh++;
+  rkkey = luaK_exp2RK(fs, key);
+  luaK_codeABC(fs, OP_SETTABLE, cc->t->u.s.info, rkkey, luaK_exp2RK(fs, val));
+  fs->freereg = reg;  /* free registers */
+}
+
+
 static void recfield (LexState *ls, struct ConsControl *cc) {
   /* recfield -> (NAME | `['exp1`]') = exp1 */
   FuncState *fs = ls->fs;
-  int reg = ls->fs->freereg;
   expdesc key, val;
-  int rkkey;
   if (ls->t.token == TK_NAME) {
     luaY_checklimit(fs, cc->nh, MAX_INT, "items in a constructor");
     checkname(ls, &key);
   }
   else  /* ls->t.token == '[' */
     yindex(ls, &key);
-  cc->nh++;
   checknext(ls, '=');
-  rkkey = luaK_exp2RK(fs, &key);
   expr(ls, &val);
-  luaK_codeABC(fs, OP_SETTABLE, cc->t->u.s.info, rkkey, luaK_exp2RK(fs, &val));
-  fs->freereg = reg;  /* free registers */
+  recfieldkv(ls, cc, &key, &val);
 }
 
 
@@ -495,6 +504,45 @@ static void listfield (LexState *ls, struct ConsControl *cc) {
 }
 
 
+/* bn 01/2012: added class-like function/method constructors */
+static void body (LexState *ls, expdesc *e, int ismethod, int line);
+static void funcfield (LexState *ls, struct ConsControl *cc) {
+  /* recfield -> FUNCTION NAME body */
+  FuncState *fs = ls->fs;
+  expdesc key, val;
+  checknext(ls, TK_FUNCTION); /* skip FUNCTION */
+  luaY_checklimit(fs, cc->nh, MAX_INT, "items in a constructor");
+  checkname(ls, &key); /* read Name */
+  body(ls, &val, 1, ls->linenumber);
+  recfieldkv(ls, cc, &key, &val);
+}
+/* end changes */
+
+
+/* mrw 05/20123: same for curried functions */
+static void currybody (LexState *ls, expdesc *e, int first, int needself, int line);
+static void curriedfield (LexState *ls, struct ConsControl *cc)
+{
+  luaX_next(ls); /* skip CURRIED */
+  checknext(ls, TK_FUNCTION); /* skip FUNCTION */
+  /* anonymous? */
+  if (ls->t.token == '(') {
+    /* basically listfield() */
+    currybody(ls, &cc->v, 1, 0, ls->linenumber);
+    luaY_checklimit(ls->fs, cc->na, MAX_INT, "items in a constructor");
+    cc->na++;
+    cc->tostore++;
+  }
+  else {
+    expdesc key, val;
+    checkname(ls, &key);
+    currybody(ls, &val, 1, 1, ls->linenumber);
+    recfieldkv(ls, cc, &key, &val);
+  }
+}
+/* end changes */
+
+
 static void constructor (LexState *ls, expdesc *t) {
   /* constructor -> ?? */
   FuncState *fs = ls->fs;
@@ -520,6 +568,22 @@ static void constructor (LexState *ls, expdesc *t) {
           recfield(ls, &cc);
         break;
       }
+      /* bn 01/2012: added class-like function/method constructors */
+      case TK_FUNCTION: {  /* funcfield */
+        luaX_lookahead(ls);
+        if(ls->lookahead.token == '(')  /* anonymous? */
+          listfield(ls, &cc);
+        else
+          funcfield(ls, &cc);
+        break;
+      }
+      /* end changes */
+      /* mrw 05/2013: same for curried functions */
+      case TK_CURRIED: {
+        curriedfield(ls, &cc);
+        break;
+      }
+      /* end changes */
       case '[': {  /* constructor_item -> recfield */
         recfield(ls, &cc);
         break;
@@ -972,11 +1036,15 @@ static int cond (LexState *ls) {
 }
 
 
-static void breakstat (LexState *ls) {
+static void breakstat (LexState *ls, lua_Integer count) {
   FuncState *fs = ls->fs;
   BlockCnt *bl = fs->bl;
   int upval = 0;
-  while (bl && !bl->isbreakable) {
+  if( count <= 0 ) {
+    luaX_syntaxerror(ls, "break-number must be positive");
+  }
+  /* --count is only executed if bl->isbreakable (lazy evaluation) */
+  while (bl && (!bl->isbreakable || --count > 0)) {
     upval |= bl->upval;
     bl = bl->previous;
   }
@@ -985,6 +1053,31 @@ static void breakstat (LexState *ls) {
   if (upval)
     luaK_codeABC(fs, OP_CLOSE, bl->nactvar, 0, 0);
   luaK_concat(fs, &bl->breaklist, luaK_jump(fs));
+}
+
+
+static void continuestat (LexState *ls) {
+  FuncState *fs = ls->fs;
+  BlockCnt *bl = fs->bl;
+  int upval = 0;
+  lua_Integer count = 1;
+  if (ls->t.token == TK_NUMBER) {
+    lua_Number dnum = ls->t.seminfo.r;
+    lua_number2integer(count, dnum);
+    if (count < 1) {
+      luaX_syntaxerror(ls, "continue-number must be positive");
+    }
+    luaX_next(ls); /* skip <number> */
+  }
+  while (bl && (!bl->isbreakable || --count > 0)) {
+    upval |= bl->upval;
+    bl = bl->previous;
+  }
+  if (!bl)
+    luaX_syntaxerror(ls, "no loop to continue");
+  if (upval)
+    luaK_codeABC(fs, OP_CLOSE, bl->nactvar, 0, 0);
+  luaK_concat(fs, &bl->continuelist, luaK_jump(fs));
 }
 
 
@@ -1001,6 +1094,7 @@ static void whilestat (LexState *ls, int line) {
   checknext(ls, TK_DO);
   block(ls);
   luaK_patchlist(fs, luaK_jump(fs), whileinit);
+  luaK_patchlist(fs, bl.continuelist, whileinit);  /* continue goes to start, too */
   check_match(ls, TK_END, TK_WHILE, line);
   leaveblock(fs);
   luaK_patchtohere(fs, condexit);  /* false conditions finish the loop */
@@ -1017,6 +1111,7 @@ static void repeatstat (LexState *ls, int line) {
   enterblock(fs, &bl2, 0);  /* scope block */
   luaX_next(ls);  /* skip REPEAT */
   chunk(ls);
+  luaK_patchtohere(fs, bl1.continuelist);
   check_match(ls, TK_UNTIL, TK_REPEAT, line);
   condexit = cond(ls);  /* read condition (inside scope block) */
   if (!bl2.upval) {  /* no upvalues? */
@@ -1024,7 +1119,7 @@ static void repeatstat (LexState *ls, int line) {
     luaK_patchlist(ls->fs, condexit, repeat_init);  /* close the loop */
   }
   else {  /* complete semantics when there are upvalues */
-    breakstat(ls);  /* if condition then break */
+    breakstat(ls, 1);  /* if condition then break */
     luaK_patchtohere(ls->fs, condexit);  /* else... */
     leaveblock(fs);  /* finish scope... */
     luaK_patchlist(ls->fs, luaK_jump(fs), repeat_init);  /* and repeat */
@@ -1057,6 +1152,7 @@ static void forbody (LexState *ls, int base, int line, int nvars, int isnum) {
   block(ls);
   leaveblock(fs);  /* end of scope for declared variables */
   luaK_patchtohere(fs, prep);
+  luaK_patchtohere(fs, bl.previous->continuelist);	/* continue, if any, jumps to here */
   if (isnum) {
     luaK_patchlist(fs, luaK_codeAsBx(fs, OP_FORLOOP, base, NO_JUMP), prep + 1);
     luaK_fixline(fs, line); /* pretend that `OP_FOR' starts the loop */
@@ -1421,9 +1517,20 @@ static int statement (LexState *ls) {
       return 1;  /* must be last statement */
     }
     case TK_BREAK: {  /* stat -> breakstat */
+      int count = 1;
       luaX_next(ls);  /* skip BREAK */
-      breakstat(ls);
+      if (ls->t.token == TK_NUMBER) {
+        lua_Number dnum = ls->t.seminfo.r;
+        lua_number2integer(count, dnum);
+        luaX_next(ls); /* skip <number> */
+      }
+      breakstat(ls, count);
       return 1;  /* must be last statement */
+    }
+    case TK_CONTINUE: {  /* stat -> continuestat */
+      luaX_next(ls);  /* skip CONTINUE */
+      continuestat(ls);
+      return 1;	  /* must be last statement */
     }
     default: {
       exprstat(ls);
